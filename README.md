@@ -7,9 +7,9 @@ The system combines:
 * cubic smoothing splines,
 * analytical surface derivatives,
 * temporal memory features,
-* spatial strike-local features,
+* spatial strike local features,
 * residual XGBoost correction,
-* purged time-series validation.
+* purged time series validation.
 
 The reconstruction pipeline operates in the total variance domain and is designed to stabilize interpolation behavior while preserving localized intraday market structure.
 
@@ -19,15 +19,15 @@ The reconstruction pipeline operates in the total variance domain and is designe
 
 Directly modeling implied volatility surfaces is unstable in sparse intraday option chains, particularly near expiry where:
 
-* implied volatility becomes numerically explosive,
+* implied volatility becomes numerically unstable,
 * liquidity deteriorates,
 * strike coverage becomes inconsistent,
 * local smile geometry becomes noisy.
 
 To address this, the framework separates the reconstruction problem into:
 
-1. structural surface estimation,
-2. localized residual correction.
+1. Structural surface estimation
+2. Localized residual correction
 
 The spline layer captures the dominant smile geometry, while the machine learning layer focuses only on localized deviations from the structural baseline.
 
@@ -39,19 +39,22 @@ The spline layer captures the dominant smile geometry, while the machine learnin
 
 Instead of modeling implied volatility directly, the system operates in the total variance domain:
 
-[
-w = \sigma^2 \tau
-]
+```text
+w = σ² × τ
+```
 
 where:
 
-* ( \sigma ) = implied volatility,
-* ( \tau ) = time-to-expiry.
+| Symbol | Meaning            |
+| ------ | ------------------ |
+| `w`    | Total variance     |
+| `σ`    | Implied volatility |
+| `τ`    | Time to expiry     |
 
 This transformation improves:
 
 * numerical conditioning,
-* cross-strike smoothness,
+* cross strike smoothness,
 * interpolation stability,
 * residual learning behavior near expiry.
 
@@ -61,21 +64,24 @@ This transformation improves:
 
 The volatility surface is parameterized using:
 
-* log-moneyness,
-* time-to-expiry.
+* log moneyness,
+* time to expiry.
 
-Log-moneyness is defined as:
+Log moneyness is defined as:
 
-[
-k = \log(S/K)
-]
+```text
+k = ln(S / K)
+```
 
 where:
 
-* ( S ) = underlying price,
-* ( K ) = strike price.
+| Symbol | Meaning          |
+| ------ | ---------------- |
+| `S`    | Underlying price |
+| `K`    | Strike price     |
+| `k`    | Log moneyness    |
 
-Using log-moneyness instead of raw strike values produces smoother smile geometry and more stable spline fitting.
+Using log moneyness instead of raw strike values produces smoother smile geometry and more stable spline fitting.
 
 ---
 
@@ -110,8 +116,8 @@ Final IV Surface Reconstruction
 
 The architecture separates:
 
-* low-frequency structural geometry,
-* high-frequency microstructure deviations.
+* low frequency structural geometry,
+* high frequency microstructure deviations.
 
 This improves robustness in sparse regions while preserving local smile dynamics.
 
@@ -123,7 +129,7 @@ This improves robustness in sparse regions while preserving local smile dynamics
 
 For each timestamp:
 
-* total variance is fitted against log-moneyness,
+* total variance is fitted against log moneyness,
 * cubic smoothing splines are used to reconstruct the baseline smile.
 
 The spline baseline acts as the structural prior for the volatility surface.
@@ -149,15 +155,19 @@ The spline framework additionally extracts:
 
 ### Local Skew
 
-[
-\frac{\partial w}{\partial k}
-]
+```text
+∂w/∂k
+```
+
+Measures local smile slope across strikes.
 
 ### Local Convexity
 
-[
-\frac{\partial^2 w}{\partial k^2}
-]
+```text
+∂²w/∂k²
+```
+
+Measures local smile curvature and butterfly structure.
 
 These derivative features inject local surface geometry directly into the residual learner.
 
@@ -165,7 +175,7 @@ The model therefore learns:
 
 * smile slope,
 * curvature behavior,
-* strike-local structure,
+* strike local structure,
 
 instead of operating as a purely tabular regressor.
 
@@ -175,9 +185,9 @@ instead of operating as a purely tabular regressor.
 
 The machine learning model predicts residual variance instead of raw implied volatility:
 
-[
-w_{residual} = w_{true} - w_{baseline}
-]
+```text
+w_residual = w_true − w_baseline
+```
 
 This decomposition separates:
 
@@ -188,7 +198,7 @@ The residual learner focuses specifically on:
 
 * liquidity imbalances,
 * local smile irregularities,
-* strike-level distortions,
+* strike level distortions,
 * transient market microstructure effects.
 
 ---
@@ -204,17 +214,19 @@ Historical variance memory is constructed independently for each:
 
 Generated lag features include:
 
-* ( w_{lag1} )
-* ( w_{lag3} )
-* ( w_{lag6} )
+```text
+w_lag_1
+w_lag_3
+w_lag_6
+```
 
-These capture short-term persistence in the volatility surface.
+These capture short term persistence in the volatility surface.
 
 ---
 
 ## Spatial Strike Features
 
-Cross-strike neighborhood information is injected using:
+Cross strike neighborhood information is injected using:
 
 * upper adjacent strike variance,
 * lower adjacent strike variance.
@@ -229,11 +241,11 @@ This allows the model to learn:
 
 ## Market State Features
 
-Additional state-aware features include:
+Additional state aware features include:
 
-* time-to-expiry,
-* time-to-close,
-* day-of-week.
+* time to expiry,
+* time to close,
+* day of week.
 
 These features help the model adapt to intraday market regimes.
 
@@ -243,23 +255,19 @@ These features help the model adapt to intraday market regimes.
 
 Residual predictions are damped as expiry approaches:
 
-[
-w_{final}
-=========
+```text
+w_final = w_baseline + λ(τ) × w_residual
+```
 
-w_{baseline}
-+
-\lambda(\tau)\cdot w_{residual}
-]
+As expiry approaches:
 
-As:
-[
-\tau \rightarrow 0
-]
+```text
+τ → 0
+```
 
 the residual component is progressively forced toward zero.
 
-This stabilizes predictions in ultra-short-dated regions where:
+This stabilizes predictions in ultra short dated regions where:
 
 * gamma effects dominate,
 * spreads widen,
@@ -282,10 +290,10 @@ Validation windows are constructed using:
 This prevents:
 
 * temporal leakage,
-* overlapping market-state contamination,
+* overlapping market state contamination,
 * intraday autocorrelation leakage.
 
-The validation scheme better reflects real-world forward inference conditions compared to naive random splits.
+The validation scheme better reflects real world forward inference conditions compared to naive random splits.
 
 ---
 
@@ -329,11 +337,11 @@ Responsible for:
 * contract parsing,
 * expiry extraction,
 * total variance transformation,
-* log-moneyness construction,
+* log moneyness construction,
 * lag feature generation,
-* strike-neighborhood feature generation,
+* strike neighborhood feature generation,
 * missing value handling,
-* purged time-series split construction.
+* purged time series split construction.
 
 ### Core Transformations
 
@@ -343,7 +351,7 @@ Responsible for:
 df_long['w'] = (df_long['iv'] ** 2) * df_long['tau']
 ```
 
-#### Log-Moneyness
+#### Log Moneyness
 
 ```python
 df_long['log_moneyness'] = np.log(
@@ -364,9 +372,11 @@ Implements:
 
 ### Generated Outputs
 
-* `w_baseline`
-* `dw_dk`
-* `d2w_dk2`
+```text
+w_baseline
+dw_dk
+d2w_dk2
+```
 
 The spline layer provides:
 
@@ -431,9 +441,9 @@ The repository includes experimental notebooks evaluating:
 * spline smoothness behavior,
 * interpolation stability,
 * LightGBM vs XGBoost behavior,
-* Taylor-weighted boosting approaches,
+* Taylor weighted boosting approaches,
 * residual learning effectiveness,
-* near-expiry instability,
+* near expiry instability,
 * leakage effects in naive validation schemes.
 
 Rejected approaches are retained for:
@@ -478,7 +488,7 @@ The framework focuses on:
 
 * volatility surface reconstruction,
 * interpolation stability,
-* microstructure-aware feature engineering,
+* microstructure aware feature engineering,
 * constrained residual learning,
 * robust forward validation.
 
