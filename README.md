@@ -1,105 +1,489 @@
 # NIFTY 50 Implied Volatility Surface Reconstruction
 
-## 1. Project Overview
+A quantitative framework for reconstructing sparse and noisy NIFTY 50 implied volatility surfaces using spline-based structural fitting and residual gradient boosting.
 
-This repository provides a production-grade quantitative pipeline for NIFTY 50 implied volatility (IV) surface reconstruction. The system addresses data sparsity and microstructure noise by utilizing a hybrid approach: **Parametric Macro-Spline baselining** coupled with **localized Gradient Boosted Decision Trees (XGBoost).**
+The system combines:
 
-## 2. Quantitative Philosophy: Anchor & Scalpel
+* cubic smoothing splines,
+* analytical surface derivatives,
+* temporal memory features,
+* spatial strike-local features,
+* residual XGBoost correction,
+* purged time-series validation.
 
-The architecture deconstructs surface reconstruction into two distinct phases to separate global structural geometry from local tactical noise.
-
-### Phase 1: Structural Anchoring (The Anchor)
-
-A Smoothing Spline baseline forces the reconstruction to exist within the realm of physical possibility.
-
-* **Financial Guardianship:** This baseline enforces smoothness and ensures no-arbitrage compliance, preventing irrational market state outputs.
-* **Dimensionality Reduction:** By offloading the global volatility smile to the parametric model, the machine learning corrector focuses exclusively on local tactical adjustments.
-
-### Phase 2: Residual Learning (The Scalpel)
-
-The machine learning component operates exclusively on the residuals ($True - Baseline$).
-
-* **Precision Targeting:** The model focuses predictive power entirely on the "blind spots" of the baseline—news-driven pivots, liquidity shocks, and intraday order flow imbalances.
-* **Hybrid Generalization:** By layering local ML adjustments onto a foundation of known financial geometry, the engine remains stable where the market is smooth and adaptive where the market is chaotic.
-
-## 3. Methodology & Implementation
-
-### Mathematical Anchors
-
-* **Domain Shift:** Models predicting raw IV often explode as time-to-maturity ($\tau$) approaches zero. The pipeline uses the **Total Variance domain** ($w = IV^2 \times \tau$) to ensure stability.
-* **Boundary Extrapolation:** Spline boundaries enforce flat extrapolation, preventing arbitrage in deep OTM wings.
-
-### Microstructure Correction
-
-* **Spatial Windowing:** Cross-strike adjacency features respect butterfly spread parity.
-* **Derivative Injection:** Analytically derived Skew ($\frac{\partial w}{\partial k}$) and Convexity ($\frac{\partial^2 w}{\partial k^2}$) features provide structural awareness to the trees.
-* **Expiry Damping:** A linear multiplier forces ML residuals to zero near expiration, anchoring predictions to the parametric baseline.
-
-### Time-Series Hygiene
-
-The pipeline utilizes a **Purged Group Time Series Split** with a 1-day embargo period, preventing look-ahead bias and memorization of tick-level autocorrelation.
-
-## 4. Experimental Diagnostics
-
-The repository documents rejected hypotheses to maintain a clear research audit trail:
-
-* **LightGBM/Hessian Traps:** Failure analysis of native weighting mechanisms versus XGBoost’s `hist` tree method.
-* **Regime Switching Failures:** Diagnostic evidence demonstrating why multi-model bifurcation was redundant for single-expiry datasets.
-
-## 5. Technical Architecture
-
-```text
-nifty-iv-surface/
-├── assets/                  # Mathematical visualizations
-├── data/                    # (Git-ignored) Raw dataset storage
-├── notebooks/                      
-│   ├── experiments/         # Diagnostics of rejected methodologies
-│   ├── 01_eda.ipynb         # Exploratory data analysis
-│   └── 02_pipeline.ipynb    # Final production execution script
-├── src/                     # Modularized quantitative engine
-│   ├── data_engineering.py  # Spatial windowing and memory logic
-│   ├── splines.py           # Macro-smile mathematical baselines
-│   └── models.py            # Damped XGBoost corrector & boundary damping
-├── requirements.txt         # Environment reproducibility lock
-└── README.md
-
-```
-
-## 6. Execution
-
-1. **Environment:** Install dependencies via `pip install -r requirements.txt`.
-2. **Data:** Populate `data/raw/` with the project dataset.
-3. **Execution:** Run `notebooks/02_pipeline.ipynb`. Global seeds (`RANDOM_SEED = 1`) ensure 100% computational reproducibility.
+The reconstruction pipeline operates in the total variance domain and is designed to stabilize interpolation behavior while preserving localized intraday market structure.
 
 ---
-This repository structure adheres to professional quantitative engineering standards, ensuring modularity, reproducibility, and a clear research audit trail.
 
-## 7. File Structure Overview
+# Quantitative Motivation
 
-Your directory is organized to separate the **execution pipeline** from **exploratory research** and **mathematical logic**.
+Directly modeling implied volatility surfaces is unstable in sparse intraday option chains, particularly near expiry where:
 
-* **`assets/`**: Dedicated storage for visual outputs (charts, volatility surface plots) to be embedded in your documentation.
-* **`data/raw/`**: Contains the source CSV files. *Note: The `.gitignore` prevents these from being committed to GitHub.*
-* **`notebooks/`**: Serves as the user interface for your research.
-* `experiments/`: A "graveyard" for discarded hypotheses. Essential for proving you performed rigorous testing.
-* `eda_and_splines.ipynb`: Documenting your initial analysis and spline verification.
-* `master_pipeline.ipynb`: The primary executable script that ties all modules together for submission.
+* implied volatility becomes numerically explosive,
+* liquidity deteriorates,
+* strike coverage becomes inconsistent,
+* local smile geometry becomes noisy.
 
+To address this, the framework separates the reconstruction problem into:
 
-* **`src/`**: The core quantitative engine. By moving logic here, your code becomes unit-testable and version-controlled.
-* **`.gitignore`**: Essential for preventing large binary files or local environment variables from leaking into the repository.
-* **`requirements.txt`**: Pins your library versions to ensure that any reviewer can replicate your exact environment.
+1. structural surface estimation,
+2. localized residual correction.
 
-## 8. Module Responsibilities
+The spline layer captures the dominant smile geometry, while the machine learning layer focuses only on localized deviations from the structural baseline.
 
-This decomposition is designed for maintainability:
+---
 
-| File | Responsibility |
-| --- | --- |
-| **`data_engineering.py`** | Handles raw-to-feature transformation, spatial/temporal lag generation, and missing value imputation. Ensures no data leakage occurs during feature construction. |
-| **`splines.py`** | Houses the mathematical "Anchor." Contains the logic for fitting cubic splines to the Total Variance domain ($w = IV^2 \times \tau$) and extracting analytical derivatives. |
-| **`models.py`** | Contains the machine learning "Scalpel." Executes the damped XGBoost training loop, residual calculation, and final inferential logic. |
+# Mathematical Representation
 
+## Total Variance Domain
 
+Instead of modeling implied volatility directly, the system operates in the total variance domain:
 
-*Developed for the IIT Roorkee Finance Club Quantitative Challenge.*
+[
+w = \sigma^2 \tau
+]
+
+where:
+
+* ( \sigma ) = implied volatility,
+* ( \tau ) = time-to-expiry.
+
+This transformation improves:
+
+* numerical conditioning,
+* cross-strike smoothness,
+* interpolation stability,
+* residual learning behavior near expiry.
+
+---
+
+## Surface Coordinates
+
+The volatility surface is parameterized using:
+
+* log-moneyness,
+* time-to-expiry.
+
+Log-moneyness is defined as:
+
+[
+k = \log(S/K)
+]
+
+where:
+
+* ( S ) = underlying price,
+* ( K ) = strike price.
+
+Using log-moneyness instead of raw strike values produces smoother smile geometry and more stable spline fitting.
+
+---
+
+# Reconstruction Pipeline
+
+```text
+Raw Option Chain
+        │
+        ▼
+Contract Parsing & Reshaping
+        │
+        ▼
+Total Variance Transformation
+        │
+        ▼
+Spline Surface Baseline
+        │
+        ├── Local Surface Derivatives
+        │
+        ▼
+Residual Construction
+        │
+        ▼
+Localized XGBoost Correction
+        │
+        ▼
+Expiry Damping
+        │
+        ▼
+Final IV Surface Reconstruction
+```
+
+The architecture separates:
+
+* low-frequency structural geometry,
+* high-frequency microstructure deviations.
+
+This improves robustness in sparse regions while preserving local smile dynamics.
+
+---
+
+# Methodology
+
+## 1. Structural Surface Baseline
+
+For each timestamp:
+
+* total variance is fitted against log-moneyness,
+* cubic smoothing splines are used to reconstruct the baseline smile.
+
+The spline baseline acts as the structural prior for the volatility surface.
+
+### Boundary Extrapolation
+
+Deep OTM regions are handled using strict flat extrapolation:
+
+* wing variance is clamped,
+* first derivatives are forced to zero,
+* second derivatives are forced to zero.
+
+This prevents unstable extrapolation outside observed strike ranges.
+
+---
+
+## 2. Analytical Surface Derivatives
+
+The spline framework additionally extracts:
+
+* local skew,
+* local convexity.
+
+### Local Skew
+
+[
+\frac{\partial w}{\partial k}
+]
+
+### Local Convexity
+
+[
+\frac{\partial^2 w}{\partial k^2}
+]
+
+These derivative features inject local surface geometry directly into the residual learner.
+
+The model therefore learns:
+
+* smile slope,
+* curvature behavior,
+* strike-local structure,
+
+instead of operating as a purely tabular regressor.
+
+---
+
+# Residual Learning Framework
+
+The machine learning model predicts residual variance instead of raw implied volatility:
+
+[
+w_{residual} = w_{true} - w_{baseline}
+]
+
+This decomposition separates:
+
+* global surface geometry,
+* localized intraday distortions.
+
+The residual learner focuses specifically on:
+
+* liquidity imbalances,
+* local smile irregularities,
+* strike-level distortions,
+* transient market microstructure effects.
+
+---
+
+# Feature Engineering
+
+## Temporal Memory Features
+
+Historical variance memory is constructed independently for each:
+
+* strike,
+* option type.
+
+Generated lag features include:
+
+* ( w_{lag1} )
+* ( w_{lag3} )
+* ( w_{lag6} )
+
+These capture short-term persistence in the volatility surface.
+
+---
+
+## Spatial Strike Features
+
+Cross-strike neighborhood information is injected using:
+
+* upper adjacent strike variance,
+* lower adjacent strike variance.
+
+This allows the model to learn:
+
+* local strike continuity,
+* smile neighborhood relationships,
+* surface smoothness across strikes.
+
+---
+
+## Market State Features
+
+Additional state-aware features include:
+
+* time-to-expiry,
+* time-to-close,
+* day-of-week.
+
+These features help the model adapt to intraday market regimes.
+
+---
+
+# Expiry Damping
+
+Residual predictions are damped as expiry approaches:
+
+[
+w_{final}
+=========
+
+w_{baseline}
++
+\lambda(\tau)\cdot w_{residual}
+]
+
+As:
+[
+\tau \rightarrow 0
+]
+
+the residual component is progressively forced toward zero.
+
+This stabilizes predictions in ultra-short-dated regions where:
+
+* gamma effects dominate,
+* spreads widen,
+* implied volatility estimates become noisy.
+
+The damping mechanism prevents residual amplification near expiration and anchors the reconstruction to the structural spline baseline.
+
+---
+
+# Validation Framework
+
+The project uses a Purged Group Time Series Split with embargo windows.
+
+Validation windows are constructed using:
+
+* rolling training periods,
+* explicit purge gaps,
+* forward validation segments.
+
+This prevents:
+
+* temporal leakage,
+* overlapping market-state contamination,
+* intraday autocorrelation leakage.
+
+The validation scheme better reflects real-world forward inference conditions compared to naive random splits.
+
+---
+
+# Repository Structure
+
+```text
+IV-SURFACE-NIFTY/
+
+├── assets/
+
+├── data/
+
+├── notebooks/
+│   ├── experiments/
+│   │   ├── basic_cubic_splines.ipynb
+│   │   └── lgbm_taylor_weights.ipynb
+│   │
+│   ├── eda_and_splines.ipynb
+│   └── master_pipeline.ipynb
+
+├── src/
+│   ├── __init__.py
+│   ├── data_engineering.py
+│   ├── models.py
+│   └── splines.py
+
+├── .gitignore
+├── README.md
+└── requirements.txt
+```
+
+---
+
+# Module Responsibilities
+
+## `src/data_engineering.py`
+
+Responsible for:
+
+* option chain reshaping,
+* contract parsing,
+* expiry extraction,
+* total variance transformation,
+* log-moneyness construction,
+* lag feature generation,
+* strike-neighborhood feature generation,
+* missing value handling,
+* purged time-series split construction.
+
+### Core Transformations
+
+#### Total Variance
+
+```python
+df_long['w'] = (df_long['iv'] ** 2) * df_long['tau']
+```
+
+#### Log-Moneyness
+
+```python
+df_long['log_moneyness'] = np.log(
+    df_long['underlying_price'] / df_long['strike']
+)
+```
+
+---
+
+## `src/splines.py`
+
+Implements:
+
+* cubic smoothing spline fitting,
+* baseline variance reconstruction,
+* strict flat wing extrapolation,
+* analytical derivative extraction.
+
+### Generated Outputs
+
+* `w_baseline`
+* `dw_dk`
+* `d2w_dk2`
+
+The spline layer provides:
+
+* structural smile geometry,
+* local slope information,
+* curvature information.
+
+---
+
+## `src/models.py`
+
+Implements:
+
+* residual target generation,
+* XGBoost training,
+* fold aggregation,
+* expiry damping,
+* final IV reconstruction.
+
+### Model Features
+
+```python
+[
+    'log_moneyness',
+    'tau',
+    'w_lag_1',
+    'w_lag_3',
+    'w_lag_6',
+    'w_strike_up',
+    'w_strike_down',
+    'dw_dk',
+    'd2w_dk2',
+    'time_to_close',
+    'day_of_week'
+]
+```
+
+---
+
+# XGBoost Configuration
+
+```python
+{
+    'objective': 'reg:squarederror',
+    'max_depth': 4,
+    'learning_rate': 0.02,
+    'subsample': 0.7,
+    'colsample_bytree': 0.8,
+    'tree_method': 'hist',
+    'random_state': 1
+}
+```
+
+The model is intentionally constrained to reduce overfitting on sparse intraday option surfaces.
+
+---
+
+# Experimental Diagnostics
+
+The repository includes experimental notebooks evaluating:
+
+* spline smoothness behavior,
+* interpolation stability,
+* LightGBM vs XGBoost behavior,
+* Taylor-weighted boosting approaches,
+* residual learning effectiveness,
+* near-expiry instability,
+* leakage effects in naive validation schemes.
+
+Rejected approaches are retained for:
+
+* reproducibility,
+* research traceability,
+* comparative diagnostics.
+
+---
+
+# Reproducibility
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Place raw dataset files inside:
+
+```text
+data/
+```
+
+Run the primary execution notebook:
+
+```text
+notebooks/master_pipeline.ipynb
+```
+
+Global seeds are fixed for deterministic reproducibility:
+
+```python
+RANDOM_SEED = 1
+```
+
+---
+
+# Notes
+
+The framework focuses on:
+
+* volatility surface reconstruction,
+* interpolation stability,
+* microstructure-aware feature engineering,
+* constrained residual learning,
+* robust forward validation.
+
+The project is designed for sparse and noisy intraday option chain environments where direct implied volatility prediction becomes unstable.
+
+---
+
+Developed for the IIT Roorkee Finance Club Open Projects 2026.
